@@ -2,12 +2,14 @@ import cv2
 import numpy as np
 from google.cloud import vision
 from google.cloud.vision import types
-import os
+import os,sys
+
+filename=sys.argv[1]
 
 os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = 'boodi.json'
 client = vision.ImageAnnotatorClient()
 # Reading Image
-img = cv2.imread("car.jpg")
+img = cv2.imread(filename)
 cv2.namedWindow("Original Image",cv2.WINDOW_NORMAL)
 #img_gray = cv2.cvtColor(img,cv2.COLOR_RGB2HSV)
 #h,s,img_gray = cv2.split(img_gray)
@@ -58,9 +60,9 @@ y,cr,cb = cv2.split(cv2.cvtColor(new_image,cv2.COLOR_RGB2YCrCb))
 y = cv2.equalizeHist(y)
 final_image = cv2.cvtColor(cv2.merge([y,cr,cb]),cv2.COLOR_YCrCb2RGB)
 
-cv2.imwrite("car_extracted.jpg",final_image)
+cv2.imwrite("extracted"+filename,final_image)
 
-with open('car_extracted.jpg', 'rb') as image_file:
+with open("extracted"+filename, 'rb') as image_file:
 	content = image_file.read()
 print("Sending Image to OCR . . ")
 
