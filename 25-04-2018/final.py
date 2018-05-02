@@ -2,11 +2,11 @@ import RPi.GPIO as GPIO
 import numpy as np
 from google.cloud import vision
 from google.cloud.vision import types
-import os,sys,logging,time,cv2,yaml
+import os,sys,logging,time,cv2,yaml,requests
 from picamera import PiCamera
 
 # Function to adjust the pwm needed for the servo motors
-def setAngle(pin,angle):
+def setAngle(pin,angle,pwm):
     duty = angle / 18 + 2
     GPIO.output(pin, True)
     pwm.ChangeDutyCycle(duty)
@@ -16,16 +16,16 @@ def setAngle(pin,angle):
 
 # Motor controls
 def openGate1():
-    setAngle(motor1,70)
+    setAngle(motor1,70,pwm1)
 
 def closeGate1():
-    setAngle(motor1,0)
+    setAngle(motor1,0,pwm1)
 
 def openGate2():
-    setAngle(motor2,70)
+    setAngle(motor2,70,pwm2)
 
 def closeGate2():
-    setAngle(motor2,70)
+    setAngle(motor2,70,pwm2)
 
 
 # A global database for criminal/illegal cars is updated.
@@ -142,13 +142,13 @@ pwm2=GPIO.PWM(motor2, 50)
 pwm1.start(0)
 pwm2.start(0)
 #creating logging file
-logging.basicConfig(filename="example.log",level=logging.DEBUG)
+logging.basicConfig(filename="error_log.log",level=logging.DEBUG)
 # parking slots and car count initialization
 count=0 # universal counter to keep a track of the number of ocr operations.
-empty_slots=5 # empty parking slots counter.
+empty_slots=10 # empty parking slots counter.
 
 # User prompt to facilitate updation of the blacklist database.
-updateBlacklist=input("Do you want to add to the blacklist database?  Y/N : ")
+updateBlacklist=input("Do you want to add a number to the blacklist database?  Y/N : ")
 if updateBlacklist.lower()=="y" or updateBlacklist.lower()=="yes":
     blacklistNumber=str(input("Enter the blacklist number plate : ")).strip()
     updateCriminalDatabase(blacklistNumber)
@@ -159,7 +159,7 @@ try:
 
     while True:
         #exit control
-        if(GPIO.input(16)==True): # bigger IR signals True when object is near.
+        if(GPIO.input(16)==True) and empty_slots<10: # bigger IR signals True when object is near.
             count+=1
             filename="image"+str(count)+".jpg"
             empty_slots+=1
@@ -176,7 +176,7 @@ try:
             print("Remaining parking slots - "+str(empty_slots))
             
         #entry control
-        if(GPIO.input(18)!=True): # smaller IR signals false when object is near.
+        if(GPIO.input(18)!=True) and empty_slots>0: # smaller IR signals false when object is near.
             openGate1()
             time.sleep(2)
             closeGate1()
@@ -189,6 +189,7 @@ try:
                 time.sleep(2)
                 closeGate2()
                 print("Entry permitted succesfully.")
+                if empty_slots>0:
                 empty_slots-=1
                 print("Reamaining slots -",str(empty_slots))
                 updateParkingDatabase(text,empty_slots,"entry")
