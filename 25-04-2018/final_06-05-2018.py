@@ -3,7 +3,7 @@ import RPi.GPIO as GPIO
 import numpy as np
 from google.cloud import vision
 from google.cloud.vision import types
-import os,sys,logging,time,cv2,yaml,requests
+import os,sys,logging,time,cv2,yaml,requests,Adafruit_PCA9685
 from picamera import PiCamera
 
 # Google Vision OCR Json file settings
@@ -21,64 +21,37 @@ GPIO.setwarnings(False)
 GPIO.setmode(GPIO.BOARD)
 GPIO.setup(16,GPIO.IN) # Bigger IR to pin 16 and it is exit control sensor. Use OUT1 pin only. DO NOT use OUT2 pin.
 GPIO.setup(18,GPIO.IN) # Smaller IR to pin 18 and it is entry control sensor.
-#Set the servo motor
-motor1=11
-motor2=13
-GPIO.setmode(GPIO.BOARD)
-GPIO.setup(11, GPIO.OUT)
-GPIO.setup(13, GPIO.OUT)
-pwm1=GPIO.PWM(11, 50)
-pwm2=GPIO.PWM(13, 50)
-pwm1.start(0)
-pwm2.start(0)
+#PCA9685 settings
+pwm = Adafruit_PCA9685.PCA9685()
+pwm.set_pwm_freq(50)
 #creating logging file
 logging.basicConfig(filename="error_log.log",level=logging.DEBUG)
 # parking slots and car count initialization
 count=0 # universal counter to keep a track of the number of ocr operations.
 empty_slots=10 # empty parking slots counter.
 
+def gateOpen(pin,intial,final):
+    for i in range(intial,final,1):
+        pwm.set_pwm(pin,0,i)
+        time.sleep(0.01)
 
+def gateClose(pin,intial,final):
+    for i in range(intial,final,-1):
+        pwm.set_pwm(pin,0,i)
+        time.sleep(0.01)
 
 # Motor controls
 def openGate1():
-    duty = 70 / 18 + 2
-    GPIO.output(11, True)
-    global pwm1
-    pwm1.ChangeDutyCycle(duty)
-    time.sleep(1)
-    GPIO.output(11, False)
-    global pwm1
-    pwm1.ChangeDutyCycle(0)
+    gateOpen(0,90,180)
 
 def closeGate1():
-    duty = 0 / 18 + 2
-    GPIO.output(11, True)
-    global pwm1
-    pwm1.ChangeDutyCycle(duty)
-    time.sleep(1)
-    GPIO.output(11, False)
-    global pwm1
-    pwm1.ChangeDutyCycle(0)
+    gateClose(0,180,90)
 
 def openGate2():
-    duty = 70 / 18 + 2
-    GPIO.output(13, True)
-    global pwm2
-    pwm2.ChangeDutyCycle(duty)
-    time.sleep(1)
-    GPIO.output(13, False)
-    global pwm2
-    pwm2.ChangeDutyCycle(0)
+    gateOpen(15,90,180)
 
 def closeGate2():
-    duty = 0 / 18 + 2
-    GPIO.output(13, True)
-    global pwm2
-    pwm2.ChangeDutyCycle(duty)
-    time.sleep(1)
-    GPIO.output(13, False)
-    global pwm2
-    pwm2.ChangeDutyCycle(0)
+    gateClose(15,180,90)
 
 
 # A global database for criminal/illegal cars is updated.
@@ -228,7 +201,5 @@ try:
                 print("Remaining parking slots - "+str(empty_slots))
 except Exception as e:
     print(e)
-    pwm1.stop()
-    pwm2.stop()
     GPIO.cleanup()
     print("Program ended.")
