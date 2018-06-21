@@ -1,13 +1,20 @@
+'''
+The following dependencies are imported.
+
+google.cloud ---> provides support for OCR.
+cv2 ---> Image Processing.
+'''
 
 import RPi.GPIO as GPIO
 import numpy as np
 from google.cloud import vision
 from google.cloud.vision import types
-import os,sys,logging,time,cv2,yaml,requests
+import os,sys,logging,time,cv2,requests,Adafruit_PCA9685
 from picamera import PiCamera
 
 # Google Vision OCR Json file settings
-os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = 'boodi.json'
+os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = 'GCP_SERVICE_ACCOUNT_CREDENTIALS.json'
+
 #Camera settings
 camera=PiCamera()
 camera.resolution=(512,512)
@@ -16,72 +23,53 @@ camera.iso = 800
 camera.contrast=25
 camera.brightness=50
 camera.sharpness=100
+
 #Ir sensor settings
 GPIO.setwarnings(False)
 GPIO.setmode(GPIO.BOARD)
 GPIO.setup(16,GPIO.IN) # Bigger IR to pin 16 and it is exit control sensor. Use OUT1 pin only. DO NOT use OUT2 pin.
 GPIO.setup(18,GPIO.IN) # Smaller IR to pin 18 and it is entry control sensor.
-#Set the servo motor
-motor1=11
-motor2=13
-GPIO.setmode(GPIO.BOARD)
-GPIO.setup(11, GPIO.OUT)
-GPIO.setup(13, GPIO.OUT)
-pwm1=GPIO.PWM(11, 50)
-pwm2=GPIO.PWM(13, 50)
-pwm1.start(0)
-pwm2.start(0)
+
+#PCA9685 settings
+pwm = Adafruit_PCA9685.PCA9685()
+pwm.set_pwm_freq(50)
+
 #creating logging file
 logging.basicConfig(filename="error_log.log",level=logging.DEBUG)
+
 # parking slots and car count initialization
 count=0 # universal counter to keep a track of the number of ocr operations.
 empty_slots=10 # empty parking slots counter.
 
+# Helper function to control the opening of the gates.
+def gateOpen(pin,intial,final):
+    for i in range(intial,final,1):
+        pwm.set_pwm(pin,0,i)
+        time.sleep(0.01)
 
+# Helper function to control the closing of the gates.
+def gateClose(pin,intial,final):
+    for i in range(intial,final,-1):
+        pwm.set_pwm(pin,0,i)
+        time.sleep(0.01)
 
-# Motor controls
+# Gate control related functions.
 def openGate1():
-    duty = 70 / 18 + 2
-    GPIO.output(11, True)
-    global pwm1
-    pwm1.ChangeDutyCycle(duty)
-    time.sleep(1)
-    GPIO.output(11, False)
-    global pwm1
-    pwm1.ChangeDutyCycle(0)
+    gateOpen(0,90,180)
 
 def closeGate1():
-    duty = 0 / 18 + 2
-    GPIO.output(11, True)
-    global pwm1
-    pwm1.ChangeDutyCycle(duty)
-    time.sleep(1)
-    GPIO.output(11, False)
-    global pwm1
-    pwm1.ChangeDutyCycle(0)
+    gateClose(0,180,90)
 
 def openGate2():
-    duty = 70 / 18 + 2
-    GPIO.output(13, True)
-    global pwm2
-    pwm2.ChangeDutyCycle(duty)
-    time.sleep(1)
-    GPIO.output(13, False)
-    global pwm2
-    pwm2.ChangeDutyCycle(0)
+    gateOpen(15,90,180)
 
 def closeGate2():
-    duty = 0 / 18 + 2
-    GPIO.output(13, True)
-    global pwm2
-    pwm2.ChangeDutyCycle(duty)
-    time.sleep(1)
-    GPIO.output(13, False)
-    global pwm2
-    pwm2.ChangeDutyCycle(0)
+    gateClose(15,180,90)
 
 
-# A global database for criminal/illegal cars is updated.
+''' A global database for criminal/illegal cars is updated.
+blacklist --->updates the list of illegal cars to be denied entry into the parking lot.
+'''
 def updateCriminalDatabase(number_plate):
     blacklist=requests.get("https://api.thingspeak.com/update?api_key=QDYY29TD1PPNWDIK&field1="+str(number_plate))
     if blacklist.status_code==str(200):
@@ -89,8 +77,12 @@ def updateCriminalDatabase(number_plate):
     else:
         logging.error(number_plate+"failed to be added in the blacklist database.")
 
-# Criminal Database is checked prior to granting parking space.
-# Returns True if number is blacklisted.
+
+''' Criminal Database is checked prior to granting parking space.
+ Returns True if number is blacklisted.
+ blacklist ---> receives the updated list of illegal cars to be denied entry into the parking lot.
+ number_plate ---> The  car license number that needs to be checked in the database.
+ '''
 def checkCriminalDatabse(number_plate):
     blacklist=requests.get("https://api.thingspeak.com/channels/482414/fields/1.json?")
     blacklist=yaml.load(blacklist.text)
@@ -99,8 +91,12 @@ def checkCriminalDatabse(number_plate):
             return True
     return False
 
-# This database stores ----> Number plate of car entered/exited, entry/exit status and the current slots available after entry/exit
-# It also stores those blacklisted cars that tried availing the service.
+
+''' 
+The following function updates the database after every entry/exit.
+This database stores ----> Number plate of car entered/exited, entry/exit status and the current slots available after entry/exit
+It also stores those blacklisted cars that to enter the parking lot.
+'''
 def updateParkingDatabase(number_plate,occupied_slots,status):
     data={"api_key":"8RZ3DCTHQ6995PIE","field1":number_plate,"field2":occupied_slots,"field3":status}
     req=requests.post("https://api.thingspeak.com/update.json",data=data)
@@ -108,6 +104,7 @@ def updateParkingDatabase(number_plate,occupied_slots,status):
         print("Succesfully updated the parking database.")
     else:
         logging.error(number_plate+"failed to be added in the parking database.")
+
 
 # The following function uses Raspberry Pi camera to capture the number Plate.
 def captureNumberPlate(filename):
@@ -117,7 +114,12 @@ def captureNumberPlate(filename):
     camera.stop_preview()
     print("Captured number plate.")
 
-# The following function is used to extract the only the number plate from the image for better processing.
+''' 
+The following function is used to extract only the number plate from the image for better OCR response.
+Cannny edge detection is used to extract the image of the number plate from the car's body.
+Extracted number plate is saved as a new image and sent to Vision API for OCR detection.
+labels ---> receives the OCR output.
+'''
 def ocr(filename):
     captureNumberPlate(filename)
     client = vision.ImageAnnotatorClient()
@@ -170,7 +172,7 @@ def ocr(filename):
 
 
 
-# User prompt to facilitate updation of the blacklist database.
+# User prompt to update the blacklist databse on system start.
 updateBlacklist=input("Do you want to add a number to the blacklist database?  Y/N : ")
 if updateBlacklist.lower()=="y" or updateBlacklist.lower()=="yes":
     blacklistNumber=str(input("Enter the blacklist number plate : ")).strip()
@@ -178,8 +180,12 @@ if updateBlacklist.lower()=="y" or updateBlacklist.lower()=="yes":
 
 print("Total parking slots available ",str(empty_slots))
 
+'''
+GPIO 16 ---> IR connected to the exit gate.
+GPIO 18 ---> IR connected to the entry gate.
+The cars belonging to the criminal database are not allowed entry into the lot.
+'''
 try:
-
     while True:
         #exit control
         if(GPIO.input(16)==True) and empty_slots<10: # bigger IR signals True when object is near.
@@ -228,7 +234,5 @@ try:
                 print("Remaining parking slots - "+str(empty_slots))
 except Exception as e:
     print(e)
-    pwm1.stop()
-    pwm2.stop()
     GPIO.cleanup()
     print("Program ended.")
